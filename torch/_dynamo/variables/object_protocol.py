@@ -88,7 +88,7 @@ def vt_identity_compare(
     # behaves the same way: `obj.m is obj.m` is False in CPython.
     from .dicts import ConstDictVariable
     from .functions import UserMethodVariable
-    from .lists import ListVariable
+    from .lists import ListVariable, TupleVariable
     from .misc import ExceptionVariable, TracebackVariable
     from .sets import (
         DictKeySetVariable,
@@ -103,6 +103,7 @@ def vt_identity_compare(
             ConstDictVariable,
             ListVariable,
             SetVariable,
+            TupleVariable,
             FrozensetVariable,
             DictKeySetVariable,
             OrderedSetVariable,
