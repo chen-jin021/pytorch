@@ -70,12 +70,17 @@ static c10::SymInt get_nbytes(const Tensor& value) {
     return 0;
   }
   if (value.unsafeGetTensorImpl()->has_symbolic_sizes_strides()) {
-    // Today, the two implementations of SymInt are in Python (proxy tensor),
-    // and lazy tensor (LTC/XLA).
-    // LTC hasn't implemented SymInt support yet though
-    // Once it does, we should remove this check.
+    // Python FakeTensor storages track symbolic nbytes, as does any storage
+    // whose nbytes is itself symbolic (C++ FakeTensor); LTC/XLA storages do
+    // not. Recomputing records SymInt arithmetic under proxy mode.
     if (value.key_set().has(c10::DispatchKey::Python)) {
       return value.storage().sym_nbytes();
+    }
+    if (const auto& storage = value.unsafeGetTensorImpl()->unsafe_storage()) {
+      auto nbytes = storage.sym_nbytes();
+      if (nbytes.is_heap_allocated()) {
+        return nbytes;
+      }
     }
     return at::detail::computeStorageNbytes(value.sym_sizes(), value.sym_strides(),static_cast<int64_t>(value.dtype().itemsize()), value.sym_storage_offset());
   }

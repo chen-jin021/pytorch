@@ -4699,6 +4699,9 @@ def forward(self, arg0_1: "i64[1][1]cpu", arg1_1: "Sym(u1)", arg2_1: "i64[u1][1]
             self.assertEqual(cnt.frame_count, 1)
 
         aot_graphs = "\n".join(log_stream.getvalue().strip().split("\n")[4:]).strip()
+        if torch._dynamo.config.use_cpp_fake_tensor:
+            # C++ FakeTensor records two fewer dead SymInt nodes here.
+            aot_graphs = aot_graphs.replace("mul_15", "mul_17")
         self.assertExpectedInline(
             aot_graphs,
             """\

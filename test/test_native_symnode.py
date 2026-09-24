@@ -3974,6 +3974,75 @@ class TestNativeSymNode(TestCase):
         self.assertEqual(found, allowed)
 
 
+class TestCppFakeStorageNbytes(TestCase):
+    """C++ fake storages carry the symbolic nbytes Python fake storages do, and
+    functionalization reads it instead of recomputing it from sizes/strides."""
+
+    @staticmethod
+    def storage_nbytes(cpp):
+        from torch._subclasses.fake_tensor import FakeTensorMode
+        from torch.fx.experimental.symbolic_shapes import StatelessSymbolicContext
+
+        with torch._dynamo.config.patch(use_cpp_fake_tensor=cpp):
+            mode = FakeTensorMode(shape_env=ShapeEnv())
+        ctx = StatelessSymbolicContext(dynamic_sizes=[DimDynamic.DYNAMIC] * 2)
+
+        def fake(name, *size):
+            src = ConstantSource(name)
+            return mode.from_tensor(torch.randn(size), source=src, symbolic_context=ctx)
+
+        x, y = fake("x", 4, 6), fake("y", 6, 5)
+        with mode:
+            outs = {
+                "input": x,
+                "mm": x @ y,
+                "add": x + 1,
+                "empty": torch.empty(x.shape[0], 3),
+                "zeros_like": torch.zeros_like(x),
+                "new_empty": x.new_empty((x.shape[1], 2)),
+                "cat": torch.cat([x, x]),
+                "contiguous": x.t().contiguous(),
+                "slice": x[1:],
+                "slice_col": x[:, 2:],
+                "narrow": x.narrow(0, 1, 2),
+                "view": x.view(-1),
+                "expand": x[:, :1].expand(x.shape[0], 7),
+                "concrete_storage": torch.empty(10)[: x.shape[0]],
+            }
+            res = {}
+            for k, t in outs.items():
+                nbytes = t.untyped_storage().nbytes()
+                res[k] = tuple(map(str, (t.shape, t.storage_offset(), nbytes)))
+            for k in ("input", "slice", "narrow"):
+                functional = torch._to_functional_tensor(outs[k])
+                res["functional_" + k] = str(functional.untyped_storage().nbytes())
+            return res
+
+    def test_storage_nbytes(self):
+        got = self.storage_nbytes(cpp=True)
+        self.assertEqual(got, self.storage_nbytes(cpp=False))
+        self.assertEqual(got["slice"][2], "4*s20*s93")
+        self.assertEqual(got["functional_slice"], "4*s20*s93")
+        self.assertEqual(got["concrete_storage"][2], "40")
+
+    @parametrize("native", [False, True])
+    def test_functionalize_no_dead_nodes(self, native):
+        def f(x, y):
+            a = x[1:] * 2
+            b = a.t() @ y
+            return b.view(-1).add_(1)
+
+        def trace(cpp):
+            flags = {"use_cpp_fake_tensor": cpp, "use_cpp_symnode": native and cpp}
+            args = torch.randn(5, 3), torch.randn(4, 2)
+            g = torch.func.functionalize(f)
+            with torch._dynamo.config.patch(**flags):
+                return make_fx(g, tracing_mode="symbolic")(*args).code
+
+        # Node names count the dead nodes too (e.g. add_14 vs add_2).
+        self.assertEqual(trace(cpp=True), trace(cpp=False))
+
+
 class TestNativeSymNodeCompile(TestCase):
     """torch.compile with dynamic shapes, flag on vs off."""
 
@@ -4672,6 +4741,7 @@ instantiate_parametrized_tests(TestNativeStaticPasses)
 instantiate_parametrized_tests(TestNativeShapeEnv)
 instantiate_parametrized_tests(TestNativeShapeEnvSync)
 instantiate_parametrized_tests(TestNativeSymNode)
+instantiate_parametrized_tests(TestCppFakeStorageNbytes)
 instantiate_parametrized_tests(TestNativeSymNodeCompile)
 instantiate_parametrized_tests(TestNativeSymIntGlue)
 
